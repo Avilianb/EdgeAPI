@@ -1528,10 +1528,6 @@ func (this *NodeClusterService) UpdateNodeClusterHTTPPagesPolicy(ctx context.Con
 
 // UpdateNodeClusterHTTP3Policy 修改集群的HTTP3设置
 func (this *NodeClusterService) UpdateNodeClusterHTTP3Policy(ctx context.Context, req *pb.UpdateNodeClusterHTTP3PolicyRequest) (*pb.RPCSuccess, error) {
-	if !teaconst.IsPlus {
-		return nil, this.NotImplementedYet()
-	}
-
 	_, err := this.ValidateAdmin(ctx)
 	if err != nil {
 		return nil, err

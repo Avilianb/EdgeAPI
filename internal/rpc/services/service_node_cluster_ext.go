@@ -5,12 +5,31 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 
+	"github.com/TeaOSLab/EdgeAPI/internal/db/models"
 	"github.com/TeaOSLab/EdgeCommon/pkg/rpc/pb"
 )
 
 func (this *NodeClusterService) FindNodeClusterHTTP3Policy(ctx context.Context, req *pb.FindNodeClusterHTTP3PolicyRequest) (*pb.FindNodeClusterHTTP3PolicyResponse, error) {
-	return nil, this.NotImplementedYet()
+	_, _, err := this.ValidateAdminAndUser(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+
+	var tx = this.NullTx()
+	policy, err := models.SharedNodeClusterDAO.FindClusterHTTP3Policy(tx, req.NodeClusterId, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	policyJSON, err := json.Marshal(policy)
+	if err != nil {
+		return nil, err
+	}
+	return &pb.FindNodeClusterHTTP3PolicyResponse{
+		Http3PolicyJSON: policyJSON,
+	}, nil
 }
 
 // FindNodeClusterNetworkSecurityPolicy 获取集群的网络安全策略
