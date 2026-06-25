@@ -1,0 +1,113 @@
+name: release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+        default: v1.4.1-community-http3.1
+
+permissions:
+  contents: write
+
+env:
+  DEPENDENCY_OWNER: Avilianb
+  DEPENDENCY_BRANCH: feature/community-http3
+
+jobs:
+  release:
+    name: Build and release linux/amd64
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out EdgeAPI
+        uses: actions/checkout@v4
+        with:
+          path: EdgeAPI
+
+      - name: Check out EdgeCommon dependency
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DEPENDENCY_OWNER }}/EdgeCommon
+          ref: ${{ env.DEPENDENCY_BRANCH }}
+          path: EdgeCommon
+
+      - name: Check out EdgeNode dependency
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DEPENDENCY_OWNER }}/EdgeNode
+          ref: ${{ env.DEPENDENCY_BRANCH }}
+          path: EdgeNode
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+          cache: true
+          cache-dependency-path: |
+            EdgeAPI/go.sum
+            EdgeNode/go.sum
+            EdgeCommon/go.sum
+
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y zip
+
+      - name: Download modules
+        working-directory: EdgeAPI
+        run: go mod download
+
+      - name: Run HTTP/3 policy tests
+        working-directory: EdgeAPI
+        run: go test -tags=community ./internal/rpc/services -run 'TestEncodeNodeHTTP3Policies' -count=1
+
+      - name: Package edge-api
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          node_version="$(sed -nE 's/.*Version[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' EdgeNode/internal/const/const.go | head -n1)"
+          api_dist="$RUNNER_TEMP/edge-api"
+          node_dist="$RUNNER_TEMP/edge-node"
+          node_zip="$RUNNER_TEMP/edge-node-linux-amd64-community-v${node_version}.zip"
+          asset="$RUNNER_TEMP/edge-api-linux-amd64-community-${RELEASE_TAG}.zip"
+
+          rm -rf "$api_dist" "$node_dist"
+          mkdir -p "$node_dist/bin" "$node_dist/configs" "$node_dist/logs" "$node_dist/data"
+          cp EdgeNode/build/configs/api_node.template.yaml "$node_dist/configs/"
+          cp EdgeNode/build/configs/cluster.template.yaml "$node_dist/configs/"
+          cp -R EdgeNode/build/www "$node_dist/"
+          cp -R EdgeNode/build/pages "$node_dist/"
+          (
+            cd EdgeNode
+            CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -trimpath -tags community -ldflags="-s -w" -o "$node_dist/bin/edge-node" ./cmd/edge-node
+          )
+          cd "$RUNNER_TEMP"
+          zip -r -X -q "$node_zip" edge-node/
+
+          mkdir -p "$api_dist/bin" "$api_dist/configs" "$api_dist/logs" "$api_dist/data" "$api_dist/deploy" "$api_dist/installers"
+          cp EdgeAPI/build/configs/api.template.yaml "$api_dist/configs/"
+          cp EdgeAPI/build/configs/db.template.yaml "$api_dist/configs/"
+          cp "$node_zip" "$api_dist/deploy/edge-node-linux-amd64-v${node_version}.zip"
+          cp -R EdgeAPI/build/installers/. "$api_dist/installers/"
+          rm -f "$api_dist/installers/.gitignore"
+          (
+            cd EdgeAPI
+            CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -tags community -ldflags="-s -w" -o "$api_dist/installers/edge-installer-helper-linux-amd64" ./cmd/installer-helper
+            CGO_ENABLED=1 GOOS=linux GOARCH=amd64 go build -trimpath -tags community -ldflags="-s -w" -o "$api_dist/bin/edge-api" ./cmd/edge-api
+          )
+          cd "$RUNNER_TEMP"
+          zip -r -X -q "$asset" edge-api/
+          echo "ASSET=$asset" >> "$GITHUB_ENV"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG_NAME" "$ASSET" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "$TAG_NAME" \
+            --notes "Community HTTP/3 edge-api release built by GitHub Actions for linux/amd64. The package includes the linux/amd64 edge-node installer payload."
