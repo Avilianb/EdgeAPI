@@ -16,6 +16,7 @@ const (
 	ProviderTypeEdgeDNSAPI   ProviderType = "edgeDNSAPI"   // 通过API连接的EdgeDNS
 	ProviderTypeCustomHTTP   ProviderType = "customHTTP"   // 自定义HTTP接口
 	ProviderTypeDNSLA        ProviderType = "dnsla"        // DNSLA
+	ProviderTypePowerDNS     ProviderType = "powerDNS"     // PowerDNS Authoritative
 )
 
 // FindAllProviderTypes 所有的服务商类型
@@ -50,6 +51,11 @@ func FindAllProviderTypes() []maps.Map {
 			"name":        "EdgeDNS API",
 			"code":        ProviderTypeEdgeDNSAPI,
 			"description": "通过API连接GoEdge商业版系统提供的DNS服务。",
+		},
+		{
+			"name":        "PowerDNS Authoritative",
+			"code":        ProviderTypePowerDNS,
+			"description": "通过PowerDNS Authoritative HTTP API提供权威DNS、健康检查和GeoDNS服务。",
 		},
 	}
 

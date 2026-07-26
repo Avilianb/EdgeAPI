@@ -38,6 +38,10 @@ func FindProvider(providerType ProviderType, providerId int64) ProviderInterface
 		return &DNSLaProvider{
 			ProviderId: providerId,
 		}
+	case ProviderTypePowerDNS:
+		return &PowerDNSProvider{
+			ProviderId: providerId,
+		}
 	}
 
 	return nil
