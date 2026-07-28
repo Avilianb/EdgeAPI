@@ -387,7 +387,7 @@ func (this *DNSTaskExecutor) doCluster(taskId int64, taskVersion int64, clusterI
 			continue
 		}
 
-		routes, err := node.DNSRouteCodesForDomainId(domainId)
+		routes, err := node.DNSRouteCodesForClusterId(clusterId, domainId)
 		if err != nil {
 			return err
 		}

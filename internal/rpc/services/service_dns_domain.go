@@ -498,7 +498,7 @@ func (this *DNSDomainService) findClusterDNSChanges(cluster *models.NodeCluster,
 			continue
 		}
 
-		routeCodes, err := node.DNSRouteCodesForDomainId(int64(cluster.DnsDomainId))
+		routeCodes, err := node.DNSRouteCodesForClusterId(clusterId, int64(cluster.DnsDomainId))
 		if err != nil {
 			return nil, nil, nil, 0, 0, false, false, err
 		}

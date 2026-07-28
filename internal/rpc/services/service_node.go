@@ -47,6 +47,23 @@ type NodeService struct {
 	BaseService
 }
 
+func parseDNSRouteCodes(routes []string) map[int64][]string {
+	var result = map[int64][]string{}
+	for _, route := range routes {
+		var pieces = strings.SplitN(route, "@", 2)
+		if len(pieces) != 2 {
+			continue
+		}
+		var code = pieces[0]
+		var domainId = types.Int64(pieces[1])
+		if len(code) == 0 || domainId <= 0 || lists.ContainsString(result[domainId], code) {
+			continue
+		}
+		result[domainId] = append(result[domainId], code)
+	}
+	return result
+}
+
 // CreateNode 创建节点
 func (this *NodeService) CreateNode(ctx context.Context, req *pb.CreateNodeRequest) (*pb.CreateNodeResponse, error) {
 	adminId, err := this.ValidateAdmin(ctx)
@@ -71,24 +88,18 @@ func (this *NodeService) CreateNode(ctx context.Context, req *pb.CreateNodeReque
 
 	// 保存DNS相关
 	if len(req.DnsRoutes) > 0 {
-		var routesMap = map[int64][]string{}
-		var m = map[int64][]string{} // domainId => codes
-		for _, route := range req.DnsRoutes {
-			var pieces = strings.SplitN(route, "@", 2)
-			if len(pieces) != 2 {
-				continue
+		var routesMap = parseDNSRouteCodes(req.DnsRoutes)
+		if len(routesMap) > 0 {
+			var routes = &models.NodeDNSRoutes{
+				Legacy:   map[int64][]string{},
+				Clusters: map[int64]map[int64][]string{},
 			}
-			var code = pieces[0]
-			var domainId = types.Int64(pieces[1])
-			m[domainId] = append(m[domainId], code)
-		}
-		for domainId, codes := range m {
-			routesMap[domainId] = codes
-		}
+			routes.Clusters[req.NodeClusterId] = routesMap
 
-		err = models.SharedNodeDAO.UpdateNodeDNS(tx, nodeId, routesMap)
-		if err != nil {
-			return nil, err
+			err = models.SharedNodeDAO.UpdateNodeDNS(tx, nodeId, routes)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -294,7 +305,7 @@ func (this *NodeService) ListEnabledNodesMatch(ctx context.Context, req *pb.List
 		// DNS线路
 		var pbRoutes = []*pb.DNSRoute{}
 		if dnsDomainId > 0 {
-			routeCodes, err := node.DNSRouteCodesForDomainId(dnsDomainId)
+			routeCodes, err := node.DNSRouteCodesForClusterId(req.NodeClusterId, dnsDomainId)
 			if err != nil {
 				return nil, err
 			}
@@ -1399,7 +1410,7 @@ func (this *NodeService) FindAllEnabledNodesDNSWithNodeClusterId(ctx context.Con
 			return nil, err
 		}
 
-		domainRouteCodes, err := node.DNSRouteCodesForDomainId(dnsDomainId)
+		domainRouteCodes, err := node.DNSRouteCodesForClusterId(req.NodeClusterId, dnsDomainId)
 		if err != nil {
 			return nil, err
 		}
@@ -1506,7 +1517,7 @@ func (this *NodeService) FindEnabledNodeDNS(ctx context.Context, req *pb.FindEna
 
 	var pbRoutes = []*pb.DNSRoute{}
 	if dnsDomainId > 0 {
-		routeCodes, err := node.DNSRouteCodesForDomainId(dnsDomainId)
+		routeCodes, err := node.DNSRouteCodesForClusterId(clusterId, dnsDomainId)
 		if err != nil {
 			return nil, err
 		}
@@ -1560,45 +1571,49 @@ func (this *NodeService) UpdateNodeDNS(ctx context.Context, req *pb.UpdateNodeDN
 		return nil, errors.New("node not found")
 	}
 
-	var routeCodeMap = node.DNSRouteCodes()
-	if req.DnsDomainId > 0 {
-		if len(req.Routes) > 0 {
-			var m = map[int64][]string{} // domainId => codes
-			for _, route := range req.Routes {
-				var pieces = strings.SplitN(route, "@", 2)
-				if len(pieces) != 2 {
-					continue
-				}
-				var code = pieces[0]
-				var domainId = types.Int64(pieces[1])
-				m[domainId] = append(m[domainId], code)
-			}
-			for domainId, codes := range m {
-				routeCodeMap[domainId] = codes
-			}
+	routeConfig, err := node.DecodeDNSRoutes()
+	if err != nil {
+		return nil, err
+	}
+	routeCodeMap := parseDNSRouteCodes(req.Routes)
+	if req.NodeClusterId > 0 {
+		if !lists.ContainsInt64(node.AllClusterIds(), req.NodeClusterId) {
+			return nil, errors.New("node does not belong to cluster")
+		}
+		if req.DnsDomainId <= 0 {
+			return nil, errors.New("invalid dns domain")
+		}
+
+		clusterDNS, err := models.SharedNodeClusterDAO.FindClusterDNSInfo(tx, req.NodeClusterId, nil)
+		if err != nil {
+			return nil, err
+		}
+		if clusterDNS == nil || int64(clusterDNS.DnsDomainId) != req.DnsDomainId {
+			return nil, errors.New("dns domain does not belong to cluster")
+		}
+
+		if routeConfig.Clusters == nil {
+			routeConfig.Clusters = map[int64]map[int64][]string{}
+		}
+		if routeConfig.Clusters[req.NodeClusterId] == nil {
+			routeConfig.Clusters[req.NodeClusterId] = map[int64][]string{}
+		}
+
+		// 即使没有选择线路，也要保留空数组以覆盖旧版共享线路。
+		routeConfig.Clusters[req.NodeClusterId][req.DnsDomainId] = append([]string{}, routeCodeMap[req.DnsDomainId]...)
+	} else if req.DnsDomainId > 0 {
+		// 兼容尚未升级的管理端：继续修改旧版共享设置。
+		if len(routeCodeMap[req.DnsDomainId]) > 0 {
+			routeConfig.Legacy[req.DnsDomainId] = routeCodeMap[req.DnsDomainId]
 		} else {
-			delete(routeCodeMap, req.DnsDomainId)
+			delete(routeConfig.Legacy, req.DnsDomainId)
 		}
 	} else {
-		routeCodeMap = map[int64][]string{}
-		if len(req.Routes) > 0 {
-			var m = map[int64][]string{} // domainId => codes
-			for _, route := range req.Routes {
-				var pieces = strings.SplitN(route, "@", 2)
-				if len(pieces) != 2 {
-					continue
-				}
-				var code = pieces[0]
-				var domainId = types.Int64(pieces[1])
-				m[domainId] = append(m[domainId], code)
-			}
-			for domainId, codes := range m {
-				routeCodeMap[domainId] = codes
-			}
-		}
+		// 兼容旧版“节点设置 -> DNS”整页保存。新的集群配置不会被覆盖。
+		routeConfig.Legacy = routeCodeMap
 	}
 
-	err = models.SharedNodeDAO.UpdateNodeDNS(tx, req.NodeId, routeCodeMap)
+	err = models.SharedNodeDAO.UpdateNodeDNS(tx, req.NodeId, routeConfig)
 	if err != nil {
 		return nil, err
 	}
