@@ -1680,12 +1680,15 @@ func (this *NodeDAO) FindStatelessNodeDNS(tx *dbs.Tx, nodeId int64) (*Node, erro
 }
 
 // UpdateNodeDNS 修改节点的DNS信息
-func (this *NodeDAO) UpdateNodeDNS(tx *dbs.Tx, nodeId int64, routes map[int64][]string) error {
+func (this *NodeDAO) UpdateNodeDNS(tx *dbs.Tx, nodeId int64, routes *NodeDNSRoutes) error {
 	if nodeId <= 0 {
 		return errors.New("invalid nodeId")
 	}
 	if routes == nil {
-		routes = map[int64][]string{}
+		routes = &NodeDNSRoutes{
+			Legacy:   map[int64][]string{},
+			Clusters: map[int64]map[int64][]string{},
+		}
 	}
 	routesJSON, err := json.Marshal(routes)
 	if err != nil {

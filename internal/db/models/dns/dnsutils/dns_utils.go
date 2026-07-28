@@ -117,7 +117,7 @@ func CheckClusterDNS(tx *dbs.Tx, cluster *models.NodeCluster, checkNodeIssues bo
 		for _, node := range nodes {
 			var nodeId = int64(node.Id)
 
-			routeCodes, err := node.DNSRouteCodesForDomainId(domainId)
+			routeCodes, err := node.DNSRouteCodesForClusterId(clusterId, domainId)
 			if err != nil {
 				return nil, err
 			}
